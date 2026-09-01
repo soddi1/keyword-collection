@@ -46,6 +46,38 @@ def iso_duration_to_seconds(iso: str) -> Optional[int]:
     return days * 86400 + hours * 3600 + minutes * 60 + seconds
 
 
+def _setup_ansi() -> bool:
+    """Return True if ANSI escape codes work in this terminal.
+
+    On Windows, attempt to enable VT100/ANSI processing via the Win32 console
+    API. Succeeds silently on Windows Terminal, PowerShell, and most modern
+    terminals; falls back gracefully on plain cmd.exe where it would render
+    raw escape bytes instead of formatting.
+    """
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        STD_OUTPUT_HANDLE = -11
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        h = ctypes.windll.kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+        mode = ctypes.c_ulong()
+        if ctypes.windll.kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+            ctypes.windll.kernel32.SetConsoleMode(
+                h, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+            )
+            return True
+    except Exception:
+        pass
+    return False
+
+
+_ANSI = _setup_ansi()
+# Bold the word in terminals that support it; use >>> word <<< elsewhere.
+_BOLD = "\033[1m" if _ANSI else ">>> "
+_RESET = "\033[0m" if _ANSI else " <<<"
+
+
 # YouTube API client
 class QuotaExceeded(RuntimeError):
     """Raised when a call would push spend past the configured budget."""
@@ -459,18 +491,23 @@ class Reviewer:
     def __init__(self, auto_label: Optional[str] = None):
         self.auto_label = auto_label
 
-    def ask(self, word: str, context: dict, can_go_back: bool = False) -> object:
+    def ask(self, word: str, context: dict, can_go_back: bool = False, first_word: bool = True) -> object:
         if self.auto_label == "all":
             return 1
         if self.auto_label == "none":
             return 0
 
-        title = context.get("title", "")
-        kw = context.get("seed_keyword", "")
         back = " / b=back" if can_go_back else ""
+        # Show seed + title only on the first word of each video; for
+        # subsequent words of the same video it adds noise without value.
+        header = ""
+        if first_word:
+            title = context.get("title", "")
+            kw = context.get("seed_keyword", "")
+            header = f"\n  seed='{kw}'  video='{title[:70]}'\n"
         prompt = (
-            f"\n  seed='{kw}'  video='{title[:70]}'\n"
-            f"  Relevant? word = \033[1m{word}\033[0m  "
+            f"{header}"
+            f"  Relevant? word = {_BOLD}{word}{_RESET}  "
             f"[1=yes / 0=no / s=skip{back} / q=save+quit]: "
         )
         while True:
@@ -682,7 +719,7 @@ class Crawler:
         i = 0
         while i < len(to_decide):
             word = to_decide[i]
-            ans = self.reviewer.ask(word, row, can_go_back=(i > 0))
+            ans = self.reviewer.ask(word, row, can_go_back=(i > 0), first_word=(i == 0))
 
             if ans == Reviewer.QUIT:
                 raise _UserQuit()
