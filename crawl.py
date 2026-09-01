@@ -506,7 +506,7 @@ class Reviewer:
             kw = context.get("seed_keyword", "")
             header = f"\n  seed='{kw}'  video='{title[:70]}'\n"
         prompt = (
-            f"{header}"
+            f"\n{header}"
             f"  Relevant? word = {_BOLD}{word}{_RESET}  "
             f"[1=yes / 0=no / s=skip{back} / q=save+quit]: "
         )
